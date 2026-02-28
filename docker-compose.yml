@@ -1,0 +1,39 @@
+# =============================================================================
+# docker compose up        → Interactive Claude Code session
+# docker compose run claude headless  → Run a one-shot prompt
+# docker compose run claude bash      → Debug shell
+# =============================================================================
+
+services:
+  claude:
+    build: .
+    container_name: claude-code
+    stdin_open: true                # Required for interactive mode
+    tty: true                       # Required for interactive mode
+    volumes:
+      - ./workspace:/workspace      # Mount a local folder (or remove to use cloned repo)
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GIT_USER_NAME=${GIT_USER_NAME}
+      - GIT_USER_EMAIL=${GIT_USER_EMAIL}
+      # Optional: auto-clone a repo on startup
+      - GITHUB_REPO=${GITHUB_REPO}          # e.g. "octocat/Hello-World"
+      - GITHUB_BRANCH=${GITHUB_BRANCH}      # e.g. "feature/fix-bug"
+      # Commit signing: "gpg", "ssh", "none", or "auto" (default)
+      - SIGNING_METHOD=${SIGNING_METHOD:-auto}
+      - GPG_PRIVATE_KEY=${GPG_PRIVATE_KEY}  # base64-encoded GPG key
+      - GPG_PASSPHRASE=${GPG_PASSPHRASE}
+      - GPG_KEY_ID=${GPG_KEY_ID}
+      # For headless mode
+      - CLAUDE_PROMPT=${CLAUDE_PROMPT}
+      - CLAUDE_OUTPUT_FORMAT=${CLAUDE_OUTPUT_FORMAT:-text}
+    # Uncomment ONE of the volume mounts below for signing:
+    # ── Option A: GPG key file ──
+    # volumes:
+    #   - ./workspace:/workspace
+    #   - ~/.gnupg/private-keys-v1.d:/home/claude/.gnupg/private-keys-v1.d:ro
+    # ── Option B: SSH signing key ──
+    # volumes:
+    #   - ./workspace:/workspace
+    #   - ~/.ssh/id_ed25519:/home/claude/.ssh/signing_key:ro
