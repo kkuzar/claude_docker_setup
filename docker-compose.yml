@@ -1,39 +1,94 @@
 # =============================================================================
-# docker compose up        → Interactive Claude Code session
-# docker compose run claude headless  → Run a one-shot prompt
-# docker compose run claude bash      → Debug shell
+# Claude Code — Multi-language Docker profiles
+#
+# Usage:
+#   docker compose run --rm claude              → All languages (default)
+#   docker compose run --rm claude-golang       → Go
+#   docker compose run --rm claude-rust         → Rust
+#   docker compose run --rm claude-python       → Python
+#   docker compose run --rm claude-javascript   → JavaScript / TypeScript
+#   docker compose run --rm claude-local        → Mount local folder (set LOCAL_PATH in .env)
+#
+# Headless (CI/CD):
+#   docker compose run --rm -e CLAUDE_PROMPT="fix lint errors" claude headless
 # =============================================================================
 
+x-common: &common
+  stdin_open: true
+  tty: true
+  environment:
+    - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    - GITHUB_TOKEN=${GITHUB_TOKEN}
+    - GIT_USER_NAME=${GIT_USER_NAME}
+    - GIT_USER_EMAIL=${GIT_USER_EMAIL}
+    - GITHUB_REPO=${GITHUB_REPO}
+    - GITHUB_BRANCH=${GITHUB_BRANCH}
+    - SIGNING_METHOD=${SIGNING_METHOD:-auto}
+    - GPG_PRIVATE_KEY=${GPG_PRIVATE_KEY}
+    - GPG_PASSPHRASE=${GPG_PASSPHRASE}
+    - GPG_KEY_ID=${GPG_KEY_ID}
+    - CLAUDE_PROMPT=${CLAUDE_PROMPT}
+    - CLAUDE_OUTPUT_FORMAT=${CLAUDE_OUTPUT_FORMAT:-text}
+
 services:
+  # Default: all language toolchains + GitHub workflow
   claude:
-    build: .
+    <<: *common
+    build:
+      context: .
+      target: all
     container_name: claude-code
-    stdin_open: true                # Required for interactive mode
-    tty: true                       # Required for interactive mode
     volumes:
-      - ./workspace:/workspace      # Mount a local folder (or remove to use cloned repo)
-    environment:
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - GITHUB_TOKEN=${GITHUB_TOKEN}
-      - GIT_USER_NAME=${GIT_USER_NAME}
-      - GIT_USER_EMAIL=${GIT_USER_EMAIL}
-      # Optional: auto-clone a repo on startup
-      - GITHUB_REPO=${GITHUB_REPO}          # e.g. "octocat/Hello-World"
-      - GITHUB_BRANCH=${GITHUB_BRANCH}      # e.g. "feature/fix-bug"
-      # Commit signing: "gpg", "ssh", "none", or "auto" (default)
-      - SIGNING_METHOD=${SIGNING_METHOD:-auto}
-      - GPG_PRIVATE_KEY=${GPG_PRIVATE_KEY}  # base64-encoded GPG key
-      - GPG_PASSPHRASE=${GPG_PASSPHRASE}
-      - GPG_KEY_ID=${GPG_KEY_ID}
-      # For headless mode
-      - CLAUDE_PROMPT=${CLAUDE_PROMPT}
-      - CLAUDE_OUTPUT_FORMAT=${CLAUDE_OUTPUT_FORMAT:-text}
-    # Uncomment ONE of the volume mounts below for signing:
-    # ── Option A: GPG key file ──
-    # volumes:
-    #   - ./workspace:/workspace
-    #   - ~/.gnupg/private-keys-v1.d:/home/claude/.gnupg/private-keys-v1.d:ro
-    # ── Option B: SSH signing key ──
-    # volumes:
-    #   - ./workspace:/workspace
-    #   - ~/.ssh/id_ed25519:/home/claude/.ssh/signing_key:ro
+      - ./workspace:/workspace
+
+  # Go development
+  claude-golang:
+    <<: *common
+    build:
+      context: .
+      target: golang
+    container_name: claude-code-golang
+    volumes:
+      - ./workspace:/workspace
+
+  # Rust development
+  claude-rust:
+    <<: *common
+    build:
+      context: .
+      target: rust
+    container_name: claude-code-rust
+    volumes:
+      - ./workspace:/workspace
+
+  # Python development
+  claude-python:
+    <<: *common
+    build:
+      context: .
+      target: python
+    container_name: claude-code-python
+    volumes:
+      - ./workspace:/workspace
+
+  # JavaScript / TypeScript development
+  claude-javascript:
+    <<: *common
+    build:
+      context: .
+      target: javascript
+    container_name: claude-code-javascript
+    volumes:
+      - ./workspace:/workspace
+
+  # Local development — mount an existing project from your machine
+  # Set LOCAL_PATH in .env (e.g. LOCAL_PATH=../my-project)
+  # GITHUB_REPO is ignored when LOCAL_PATH points to an existing repo
+  claude-local:
+    <<: *common
+    build:
+      context: .
+      target: all
+    container_name: claude-code-local
+    volumes:
+      - ${LOCAL_PATH:-./workspace}:/workspace

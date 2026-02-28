@@ -1,20 +1,54 @@
-# Claude Code in Docker — Sandboxed GitHub Workflow with Commit Signing
+# Claude Code in Docker — Sandboxed GitHub Workflow
 
-Run Claude Code inside a Docker container for full isolation. Claude can clone, edit, commit (with signed commits), and push to your GitHub repos without touching your host machine.
+Run Claude Code inside a Docker container for full isolation. Claude can clone, edit, commit (with optional signed commits), and push to your GitHub repos without touching your host machine.
 
 ## Quick Start
 
 ```bash
 # 1. Copy and fill in your credentials
-cp .env.example .env
+cp env.example .env
 # Edit .env with your ANTHROPIC_API_KEY and GITHUB_TOKEN
 
-# 2. Build the image
-docker build -t claude-code .
-
-# 3. Run interactively
-docker run -it --rm --env-file .env claude-code
+# 2. Run with the language profile you need
+docker compose run --rm claude-golang      # Go
+docker compose run --rm claude-rust        # Rust
+docker compose run --rm claude-python      # Python
+docker compose run --rm claude-javascript  # JavaScript / TypeScript
+docker compose run --rm claude             # All languages (default)
 ```
+
+## Language Profiles
+
+Each profile includes a full base toolset (git, gcc/g++/make, curl, wget, vim, ripgrep, jq, zip/unzip) plus the language-specific toolchain.
+
+| Service | Toolchain added |
+|---|---|
+| `claude` | All of the below |
+| `claude-golang` | Go (official tarball, latest stable) |
+| `claude-rust` | Rust via rustup (stable) |
+| `claude-python` | python3-dev, venv, pipx |
+| `claude-javascript` | TypeScript, ts-node, eslint, prettier |
+| `claude-local` | All languages — mounts a local folder instead of cloning |
+
+### Pinning the Go version
+
+```bash
+# In docker-compose.yml, under the golang/all build section:
+docker compose build --build-arg GO_VERSION=1.22.3 claude-golang
+```
+
+## Working with Local Code
+
+Use `claude-local` to work on a project already on your machine:
+
+```bash
+# In your .env:
+LOCAL_PATH=../my-existing-project
+
+docker compose run --rm claude-local
+```
+
+If `LOCAL_PATH` is not set, it defaults to `./workspace`.
 
 ## How Credentials Are Passed
 
@@ -25,7 +59,7 @@ docker run -it --rm --env-file .env claude-code
 | `GIT_USER_NAME` | Git commit author name | Your name |
 | `GIT_USER_EMAIL` | Git commit author email | Your email |
 
-**Credentials are NEVER baked into the image.** They're injected at runtime.
+**Credentials are NEVER baked into the image.** They're injected at runtime via `.env`.
 
 ---
 
@@ -35,115 +69,69 @@ The entrypoint auto-detects your signing method, or you can set `SIGNING_METHOD`
 
 ### Option A: GPG Signing via Environment Variable (simplest)
 
-Export your GPG key as base64 and pass it in:
-
 ```bash
-# On your host — export the key
+# Export your GPG key as base64
 gpg --export-secret-keys YOUR_KEY_ID | base64 -w0 > /tmp/gpg_b64.txt
 
-# Run with the key
-docker run -it --rm --env-file .env \
-  -e GPG_PRIVATE_KEY="$(cat /tmp/gpg_b64.txt)" \
-  -e GPG_PASSPHRASE="your-passphrase" \
-  claude-code
+# Add to .env
+GPG_PRIVATE_KEY=$(cat /tmp/gpg_b64.txt)
+GPG_PASSPHRASE=your-passphrase
 ```
 
 ### Option B: GPG Signing via Mounted Key File
 
 ```bash
-# Export key to a file
 gpg --export-secret-keys --armor YOUR_KEY_ID > ~/my-gpg-key.asc
 
-docker run -it --rm --env-file .env \
+docker compose run --rm \
   -v ~/my-gpg-key.asc:/home/claude/.gnupg/private.key:ro \
-  -e GPG_PASSPHRASE="your-passphrase" \
-  claude-code
+  claude
 ```
 
 ### Option C: SSH Signing (simpler, Git 2.34+)
 
-Mount your SSH private key:
-
 ```bash
-docker run -it --rm --env-file .env \
-  -v ~/.ssh/id_ed25519:/home/claude/.ssh/signing_key:ro \
-  claude-code
+# In docker-compose.yml, add to volumes:
+# - ~/.ssh/id_ed25519:/home/claude/.ssh/signing_key:ro
 ```
 
 > **Important**: Your SSH signing key must also be added to your GitHub account under
 > Settings → SSH and GPG keys → "New SSH key" with type **Signing Key**.
-
-### Verifying It Works
-
-Inside the container, run:
-
-```bash
-# For GPG
-gpg --list-secret-keys --keyid-format long
-git log --show-signature -1
-
-# For SSH
-git log --show-signature -1
-```
-
-On GitHub, signed commits show a green "Verified" badge.
 
 ---
 
 ## Usage Modes
 
 ### Interactive (default)
+
 ```bash
-docker run -it --rm --env-file .env claude-code
+docker compose run --rm claude
 ```
 
 ### Auto-Clone a Repo
+
 ```bash
-docker run -it --rm --env-file .env \
-  -e GITHUB_REPO="your-username/your-repo" \
-  -e GITHUB_BRANCH="feature/my-fix" \
-  claude-code
+# In .env:
+GITHUB_REPO=your-username/your-repo
+GITHUB_BRANCH=feature/my-fix
+
+docker compose run --rm claude-golang
 ```
 
 ### Headless (CI/CD)
+
 ```bash
-docker run --rm --env-file .env \
+docker compose run --rm \
   -e GITHUB_REPO="your-username/your-repo" \
   -e CLAUDE_PROMPT="Fix all lint errors and commit" \
-  claude-code headless
-```
-
-### Mount Local Folder
-```bash
-docker run -it --rm --env-file .env \
-  -v $(pwd)/my-project:/workspace/my-project \
-  -w /workspace/my-project \
-  claude-code
+  claude headless
 ```
 
 ### Debug Shell
-```bash
-docker run -it --rm --env-file .env claude-code bash
-```
-
----
-
-## Full Example: GPG-Signed Commits on a GitHub Repo
 
 ```bash
-docker run -it --rm \
-  -e ANTHROPIC_API_KEY="sk-ant-..." \
-  -e GITHUB_TOKEN="ghp_..." \
-  -e GIT_USER_NAME="Jane Doe" \
-  -e GIT_USER_EMAIL="jane@example.com" \
-  -e GITHUB_REPO="jane/my-project" \
-  -e GITHUB_BRANCH="claude/refactor" \
-  -e GPG_PRIVATE_KEY="$(gpg --export-secret-keys ABCD1234 | base64 -w0)" \
-  -e GPG_PASSPHRASE="hunter2" \
-  claude-code
+docker compose run --rm claude bash
 ```
-
-Claude Code will clone the repo, check out the branch, and every commit it makes will be GPG-signed.
 
 ---
 
@@ -152,7 +140,6 @@ Claude Code will clone the repo, check out the branch, and every commit it makes
 - Container runs as **non-root user** (`claude`)
 - `--dangerously-skip-permissions` is on because the container IS the sandbox
 - GPG keys and passphrases exist only in container memory at runtime
-- Add `--read-only --tmpfs /tmp` for extra hardening
 - Use fine-grained GitHub tokens scoped to specific repos when possible
 
 ## GitHub Token Scopes
@@ -165,8 +152,9 @@ Claude Code will clone the repo, check out the branch, and every commit it makes
 
 | Problem | Solution |
 |---|---|
-| `GPG signing failed` | Check key import: run with `bash` mode, then `gpg --list-secret-keys` |
-| `error: gpg failed to sign the data` | Passphrase issue — set `GPG_PASSPHRASE` or use a key without one |
+| `GPG signing failed` | Run with `bash` mode, then `gpg --list-secret-keys` |
+| `error: gpg failed to sign the data` | Set `GPG_PASSPHRASE` or use a key without one |
 | Commits not showing "Verified" on GitHub | Upload your GPG public key to GitHub Settings → SSH and GPG keys |
 | SSH signing fails | Ensure key is mounted with correct permissions (`:ro` is fine) |
-| `ERROR: ANTHROPIC_API_KEY is required` | Set it in `.env` or pass `-e` |
+| `ERROR: ANTHROPIC_API_KEY is required` | Set it in `.env` |
+| Go version too old | Build with `--build-arg GO_VERSION=x.y.z` |

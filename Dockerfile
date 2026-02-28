@@ -1,22 +1,23 @@
 # =============================================================================
-# Claude Code in Docker — Sandboxed GitHub Workflow
+# Claude Code in Docker — Multi-language Profiles
 # =============================================================================
-# Usage:
-#   docker build -t claude-code .
-#   docker run -it --rm \
-#     -e ANTHROPIC_API_KEY="sk-ant-..." \
-#     -e GITHUB_TOKEN="ghp_..." \
-#     -e GIT_USER_NAME="Your Name" \
-#     -e GIT_USER_EMAIL="you@example.com" \
-#     claude-code
+# Build targets (select via docker-compose service or --target flag):
+#
+#   base         — Common tools only (no language toolchain)
+#   golang       — Go (official tarball, arch-aware)
+#   rust         — Rust (rustup, stable)
+#   python       — Python dev tools (venv, pipx, python3-dev)
+#   javascript   — TypeScript / Node.js ecosystem
+#   all          — All languages above (default)
 # =============================================================================
 
-FROM node:22-slim
+# ─── Base: system tools + Claude Code ─────────────────────────────────────────
+FROM node:22-slim AS base
 
-# Install system dependencies (includes GPG for commit signing)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
+    wget \
     ca-certificates \
     openssh-client \
     build-essential \
@@ -26,34 +27,81 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     jq \
     vim \
     gnupg \
+    zip \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Install latest npm (security best practice)
 RUN npm install -g npm@latest
-
-# Install Claude Code
 RUN npm install -g @anthropic-ai/claude-code@latest
 
-# Create non-root user for security
 RUN useradd -m -s /bin/bash claude && \
     mkdir -p /workspace /home/claude/.claude /home/claude/.gnupg && \
     chown -R claude:claude /workspace /home/claude && \
     chmod 700 /home/claude/.gnupg
 
-# Switch to non-root user
-USER claude
-WORKDIR /workspace
-
-# ── Credentials are passed at runtime via environment variables ──
-# ANTHROPIC_API_KEY  — your Anthropic API key (required)
-# GITHUB_TOKEN       — GitHub personal access token (required for push/PR)
-# GIT_USER_NAME      — git commit author name
-# GIT_USER_EMAIL     — git commit author email
-
-# Copy the entrypoint script
 COPY --chown=claude:claude entrypoint.sh /home/claude/entrypoint.sh
 RUN chmod +x /home/claude/entrypoint.sh
 
+USER claude
+WORKDIR /workspace
+
 ENTRYPOINT ["/home/claude/entrypoint.sh"]
-# Default: drop into interactive Claude Code session
 CMD ["interactive"]
+
+# ─── Go ───────────────────────────────────────────────────────────────────────
+FROM base AS golang
+
+USER root
+ARG GO_VERSION=1.23.5
+RUN ARCH=$(dpkg --print-architecture) && \
+    GOARCH=$([ "$ARCH" = "arm64" ] && echo "arm64" || echo "amd64") && \
+    curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${GOARCH}.tar.gz" \
+    | tar -C /usr/local -xz
+ENV PATH="/usr/local/go/bin:${PATH}"
+USER claude
+
+# ─── Rust ─────────────────────────────────────────────────────────────────────
+FROM base AS rust
+
+# runs as claude (inherited from base) — rustup installs to ~/.cargo
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --no-modify-path
+ENV PATH="/home/claude/.cargo/bin:${PATH}"
+
+# ─── Python ───────────────────────────────────────────────────────────────────
+FROM base AS python
+
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3-dev \
+    python3-venv \
+    pipx \
+    && rm -rf /var/lib/apt/lists/*
+USER claude
+
+# ─── JavaScript / TypeScript ──────────────────────────────────────────────────
+FROM base AS javascript
+
+USER root
+RUN npm install -g typescript ts-node @types/node eslint prettier
+USER claude
+
+# ─── All languages ────────────────────────────────────────────────────────────
+FROM base AS all
+
+USER root
+ARG GO_VERSION=1.23.5
+RUN ARCH=$(dpkg --print-architecture) && \
+    GOARCH=$([ "$ARCH" = "arm64" ] && echo "arm64" || echo "amd64") && \
+    curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${GOARCH}.tar.gz" \
+    | tar -C /usr/local -xz
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3-dev \
+    python3-venv \
+    pipx \
+    && rm -rf /var/lib/apt/lists/*
+RUN npm install -g typescript ts-node @types/node eslint prettier
+USER claude
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --no-modify-path
+ENV PATH="/usr/local/go/bin:/home/claude/.cargo/bin:${PATH}"
